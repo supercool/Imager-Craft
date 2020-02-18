@@ -31,21 +31,13 @@ class ImagerVariable
      * Takes an array of Imager_ImageModel (or anything else that supports getUrl() and getWidth())
      * and returns a srcset string
      *
-     * todo : Implement support for other descriptors
-     *
      * @param Array $images
      * @param string $descriptor
      * @return string
      */
     public function srcset($images, $descriptor = 'w')
     {
-        $r = '';
-
-        foreach ($images as $image) {
-            $r .= $image->getUrl() . ' ' . $image->getWidth() . 'w, ';
-        }
-
-        return substr($r, 0, strlen($r) - 2);
+        return craft()->imager->srcset($images, $descriptor);
     }
 
     /**
@@ -53,9 +45,9 @@ class ImagerVariable
      * 
      * @return string
      */
-    public function base64Pixel($width = 1, $height = 1)
+    public function base64Pixel($width = 1, $height = 1, $color = 'transparent')
     {
-        return "data:image/svg+xml;charset=utf-8," . rawurlencode("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 $width $height'/>");
+        return "data:image/svg+xml;charset=utf-8," . rawurlencode("<svg xmlns='http://www.w3.org/2000/svg' width='$width' height='$height' style='background:$color'/>");
     }
 
     /**
@@ -68,7 +60,7 @@ class ImagerVariable
      */
     public function getDominantColor($image, $quality = 10, $colorValue='hex')
     {
-        return craft()->imager->getDominantColor($image, $quality, $colorValue);
+        return craft()->imager_color->getDominantColor($image, $quality, $colorValue);
     }
 
     /**
@@ -82,7 +74,7 @@ class ImagerVariable
      */
     public function getColorPalette($image, $colorCount = 8, $quality = 10, $colorValue='hex')
     {
-        return craft()->imager->getColorPalette($image, $colorCount, $quality, $colorValue);
+        return craft()->imager_color->getColorPalette($image, $colorCount, $quality, $colorValue);
     }
 
     /**
@@ -93,7 +85,7 @@ class ImagerVariable
      */
     public function hex2rgb($color) 
     {
-        return ImagerService::hex2rgb($color);
+        return Imager_ColorService::hex2rgb($color);
     }
     
     /**
@@ -104,6 +96,43 @@ class ImagerVariable
      */
     public function rgb2hex($color) 
     {
-        return ImagerService::rgb2hex($color);
+        return Imager_ColorService::rgb2hex($color);
+    }
+
+    /**
+     * Checks for webp support in image driver
+     * 
+     * @return bool
+     */
+    public function serverSupportsWebp() {
+        return craft()->imager->hasSupportForWebP();
+    }
+    
+    /**
+     * Checks for webp support in browser
+     * 
+     * @return bool
+     */
+    public function clientSupportsWebp() {
+        return strpos(craft()->request->getAcceptTypes(), 'image/webp') !== false;
+    }
+
+    /**
+     * Checks if asset is animated (only gif support atm)
+     * 
+     * @param $asset
+     * @return bool
+     */
+    public function isAnimated($asset) {
+        return craft()->imager->isAnimated($asset);
+    }
+
+    /**
+     * Checks for webp support in image driver
+     * 
+     * @return bool
+     */
+    public function imgixEnabled() {
+        return craft()->config->get('imgixEnabled', 'imager');
     }
 }

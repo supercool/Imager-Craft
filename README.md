@@ -4,15 +4,30 @@ Imager is a plugin for doing image transforms in Craft templates. It does all th
 
 Whenever possible, Imager utilizes the image manipulation library [Imagine](http://imagine.readthedocs.org/) which Craft comes with and uses for it's own transform functionality.
 
-**Features**:
+### Support Open Source. Support Imager. Buy beer.
+
+*Imager is [licensed under a MIT license](#price-license-and-support), which means that it's completely free open source software, and 
+you can use it for whatever you wish. Unfortunately, Imager doesn't make itself (it ought to, though!). A lot of beer has been consumed 
+since version 1.0.0, and beers are expensive in Norway. Craft 3 is right around the corner, which will result in many late, beer-filled 
+nights to get Imager updated to work with it.* 
+
+*If you're using Imager and want to support the development, you now have the chance! Head over to [Beerpay](https://beerpay.io/aelvan/Imager-Craft), and donate a beer or two!* 
+
+[![Beerpay](https://beerpay.io/aelvan/Imager-Craft/badge.svg?style=beer)](https://beerpay.io/aelvan/Imager-Craft)
+
+Features
+---
 
 - A convenient syntax for doing a bunch of image transforms in one go.  
 - Transforms are completely file-based, no database queries needed.
 - You can transform both images in your asset sources, local and cloud-based ones, and external images on any url.
 - Transformed images are placed in their own folder, outside of the asset source folder.
 - You can even upload and serve the transformed images from AWS.
-- Optimize your created images automatically with jpegoptim, jpegtran, optipng or TinyPNG.
+- Optimize your transformed images automatically with jpegoptim, jpegtran, mozjpeg, optipng, pngquant, gifsicle or TinyPNG and make Google happy!  
+- You can use the amazing Imgix to offload handling of images from your server.
 - You can create interlaced/progressive images.
+- You can even transform animated gifs.
+- In addition to jpeg, gif and png, you can save images in webp format (if you have the necessary server requirements).
 - Crop position is relative (in percent) not confined to edges/center (but the built-in keywords still works).  
 `{ width: 600, height: 600, mode: 'crop', position: '20% 65%' }`
 - New cropZoom parameter for when you want to get a little closer.  
@@ -43,8 +58,10 @@ Contents
 * [Transform parameters](#transform-parameters)
 * [Effects](#effects)
 * [Imager_ImageModel](#imager_imagemodel)
+* [Imager_ImgixModel](#imager_imgixmodel)
+* [Controller actions](#controller-actions)
+* [Imgix Support](#imgix-support)
 * [Caching and cache breaking](#caching-and-cache-breaking)
-* [Performance](#performance)
 * [Price, license and support](#price-license-and-support)
 * [Changelog](#changelog)
 
@@ -94,6 +111,41 @@ Defines the JPEG compression level. Higher values equals better quality and bigg
 ### pngCompressionLevel [int]
 *Default: `2`*  
 Defines the PNG compression level. PNG compression is always lossless, so this setting doesn't have any effect on quality. It only affects speed and filesize. A lower value means faster compression, but bigger filesizes. A value of 0 means "no compression", which is the preferred setting if you're doing any post optimizations of png images (with Optipng or TinyPNG).
+
+### webpQuality [int]
+*Default: `80`*  
+Defines the WEBP compression level. Higher values equals better quality and bigger filesizes.
+
+### webpImagickOptions [array]
+*Default: `array()`*  
+Additional options you want to pass to Imagick when creating webp files. See [the ImageMagick documentation](http://www.imagemagick.org/script/webp.php) for possible options (although, all are not supported by Imagick).
+
+Example on how to use it in config files:
+
+    'webpImagickOptions' => array(
+        'lossless' => 'true',
+        'method' => '5',
+    ),
+    
+Example on how to use it in your template code:
+    
+    {% set webpImage = craft.imager.transformImage(image, { width: 500, format: 'webp', webpImagickOptions: { lossless: 'true', method: '1' } }) %}
+
+### useCwebp [bool]
+*Default: `false`*  
+If you don't have support for webp in the image driver you're using (GD or Imagick), you can set this to `true` to use the cwebp command line tool instead. cwebp needs to be installed
+on the server, but is available on most linux distros.
+
+When using cwebp, Imager will first create a temprary, high quality, transformed image in the source format (jpeg, png or gif), and then convert this to webp.
+Since this results in two images being created for each transformed image, the operation is a bit slower (~15-20%) than using the image driver directly. 
+
+### cwebpPath [string]
+*Default: `/usr/bin/cwebp`*  
+Path to the cwebp binary.
+
+### cwebpOptions [string]
+*Default: ``*  
+Options to pass o the cwebp binary (use `cwebp -longhelp` to see available options). Quality (-q) is automatically added based on `webpQuality`.  
 
 ### interlace [bool|string]
 *Default: `false`*  
@@ -154,7 +206,7 @@ The default focal point to be used when cropping an image. This can either be in
 
 ### letterbox [array]
 *Default: `array('color'=>'#000', 'opacity'=>0)`*  
-Specifies the color and opacity to use for the background when using the letterbox resize method. Opacity is only applicable when saving the transformed file in png format.
+Specifies the color and opacity to use for the background when using the letterbox resize method. Opacity is only applicable when saving the transformed file in png format. Animated gifs will always have transparent backgrounds.
 
 ### hashFilename [bool|string]
 *Default: `'postfix'`*  
@@ -165,6 +217,10 @@ If set to `false`, the filename will contain the generated string in clear text.
 
 If set to `true`, the whole filename is hashed. This will result in a short, but obscured, filename.
 
+### hashPath [bool]
+*Default: `false`*  
+When enabled, the path of the transformed asset will be hashed.  
+
 ### hashRemoteUrl [bool|string]
 *Default: `false`*  
 *Allowed values: `true`, `false`, `'host'`*   
@@ -174,11 +230,42 @@ If you set this to `true`, the whole url will be hashed and used as the path.
 
 If set to `'host'`, only the hostname will be hashed, while the remote path will be kept. 
 
+### useRemoteUrlQueryString [bool]
+*Default: `false`*  
+By default, query strings on external urls are not used when creating the filename of the transformed file, to improve caching. When enabled, any query string on the external url will be hashed and added as a part of the filename.  
+
 ### instanceReuseEnabled [bool]
 *Default: `false`*  
 By default, both in Imager and Craft's built in transform functionality, the original image is loaded into memory for every transform. This ensures that the quality of the resulting transform is as good as possible. 
 
 If set to `true`, the original image is only loaded once, and every transform will continue working on the same image instance. This significantly increases performance and memory use, but will most likely decrease quality. See [this demo page](http://imager.vaersaagod.no/?img=5&demo=batch-reuse) for an example of how it works.
+
+### noop [bool]
+*Default: `false`*  
+Setting `noop` (no operation) to `true` makes Imager return the source image untouched. Useful if you don't want to do image transforms in
+some environments.
+
+### suppressExceptions [bool]
+*Default: `false`*  
+By default Imager throws exceptions if file based operations fail, an external image can't be downloaded, etc. If `suppressExceptions` is set 
+to `true`, Imager will instead log errors to the log file, and return `null` to the template.   
+
+### convertToRGB [bool]
+*Default: `false`*  
+Enable this setting to ensure that transformed images are saved as RGB.    
+
+### fillTransforms [bool]
+*Default: `false`*  
+Enable this setting to automatically fill a transform array with additional transforms based on `fillAttribute` and `fillInterval`.    
+
+### fillAttribute [string]
+*Default: `'width'`*  
+Attribute to be used when filling in the transforms array. Can be any valid numeric attribute.
+     
+### fillInterval [string]
+*Default: `200`*  
+Interval to be used when filling in the transforms array. This should always be a positive integer, Imager will automatically figure out if
+the transform has been ordered in an ascending or descending order.
 
 ### jpegoptimEnabled [bool]
 *Default: `false`*  
@@ -202,7 +289,19 @@ Sets the path to your jpegtran executable.
 
 ### jpegtranOptionString [string]
 *Default: `'-optimize -copy none'`*  
-Sets the options to use when running jpegoptim. By default huffman tables are optimized, and no markers are copied from the source file.
+Sets the options to use when running jpegtran. By default huffman tables are optimized, and no markers are copied from the source file.
+
+### mozjpegEnabled [bool]
+*Default: `false`*  
+Enable or disable image optimizations with [mozjpeg](https://github.com/mozilla/mozjpeg).
+
+### mozjpegPath [string]
+*Default: `'/usr/bin/mozjpeg'`*  
+Sets the path to your mozjpeg executable.
+
+### mozjpegOptionString [string]
+*Default: `'-optimize -copy none'`*  
+Sets the options to use when running mozjpeg. By default huffman tables are optimized, and no markers are copied from the source file.
 
 ### optipngEnabled [bool]
 *Default: `false`*  
@@ -216,6 +315,30 @@ Sets the path to your optipng executable.
 *Default: `'-o5'`*  
 Sets the options to use when running optipng. By default the image file is optimized with level 5 optimizations.
 
+### pngquantEnabled [bool]
+*Default: `false`*  
+Enable or disable image optimizations with [pngquant](https://pngquant.org/).
+
+### pngquantPath [string]
+*Default: `'/usr/bin/pngquant'`*  
+Sets the path to your pngquant executable.
+
+### pngquantOptionString [string]
+*Default: `'--strip --skip-if-larger'`*  
+Sets the options to use when running pngquant. Output file (`-o`) and force overwrite (`-f`) is added by Imager and should not be set in `pngquantOptionString`. 
+
+### gifsicleEnabled [bool]
+*Default: `false`*  
+Enable or disable image optimizations with [gifsicle](https://www.lcdf.org/gifsicle/).
+
+### gifsiclePath [string]
+*Default: `'/usr/bin/gifsicle'`*  
+Sets the path to your gifsicle executable.
+
+### gifsicleOptionString [string]
+*Default: `'--optimize=3 --colors 256'`*  
+Sets the options to use when running gifsicle. Batch mode (`-b`) is added by Imager and should not be set in `gifsicleOptionString`. 
+
 ### tinyPngEnabled [bool]
 *Default: `false`*  
 Enable or disable image optimizations with [TinyPNG](https://tinypng.com/). TinyPNG is a remote service that provides an API for optimizing images.
@@ -228,6 +351,10 @@ The TinyPNG API key.
 *Default: `'task'`*  
 *Allowed values: `'task'`, `'runtime'`*   
 By default all post-transform optimizations are done as a Craft task that is run after the request has ended. This speeds up the initial transform request, but makes non-optimized images available for a short while until the task has been run. If set to `'runtime'`, all optimizations will be run immediately.
+
+### skipExecutableExistCheck [string]
+*Default: `false`*  
+By default Imager will check if the executables for the post-transform optimizations exists. If you have basedir restrictions on, or for some other reason doesn't want to do this check, set this to true.
 
 ### logOptimizations [bool]
 *Default: `false`*  
@@ -261,6 +388,11 @@ Cache duration of files on AWS.
 
 *Please note; this has nothing to do with how long a transform is cached, it is only used to tell AWS what HTTP expiry headers to set on the file.*
 
+### awsCacheDurationNonOptimized [int]
+*Default: `300`*  
+Cache duration of non-optimized files on AWS. This file will be overwritten with a file with cache duration as specified in `awsCacheDuration`,
+once the optimization task has been run.
+
 ### awsRequestHeaders [array]
 *Default: `array()`*  
 Additional request headers to send to AWS.
@@ -269,6 +401,51 @@ Additional request headers to send to AWS.
 *Default: `'standard'`*  
 *Allowed values: `'standard'`, `'rrs'`*   
 Sets the AWS storage type. 
+
+### gcsEnabled [bool]
+*Default: `false`*  
+Enables or disables uploading of transformed images to Google Cloud Storage.
+
+*Please note; even if images are uploaded to GCS, they will also be stored in the Imager system path for caching and cache breaking purposes. *
+
+### gcsAccessKey [string]
+*Default: `''`*  
+Google Cloud Storage access key.
+
+### gcsSecretAccessKey [string]
+*Default: `''`*  
+Google Cloud Storage secret key.
+
+### gcsBucket [string]
+*Default: `''`*  
+Google Cloud Storage bucket name.
+
+### gcsFolder [string]
+*Default: `''`*  
+Subfolder inside the Google Cloud Storage bucket where you want to put the transformed images.
+
+### gcsCacheDuration [int]
+*Default: `1209600`*  
+Cache duration of files on Google Cloud Storage.
+
+*Please note; this has nothing to do with how long a transform is cached, it is only used to tell Google what HTTP expiry headers to set on the file.*
+
+### gcsCacheDurationNonOptimized [int]
+*Default: `600`*  
+Cache duration of non-optimized files on Google Cloud Storage. This file will be overwritten with a file with cache duration as specified in `gcsCacheDuration`,
+once the optimization task has been run.
+
+### cloudfrontInvalidateEnabled [bool]
+*Default: `false`*  
+Enabled or disables the sending of invalidation requests to Cloudfront when a transform is generated.
+ 
+*Please note: Imager has no way of knowing if the file currently on Cloudfront differs from the one being 
+generated, so an invalidation request is sent every time a transform is created. The first 1000 invalidation
+requests per month is free, after that Amazon will start charging you.*
+
+### cloudfrontDistributionId [string]
+*Default: `''`*  
+Set this to your Cloudfront distribution ID if cloudfront invalidation is enabled. 
 
 ### curlOptions [array]
 *Default: `array()`*  
@@ -298,6 +475,63 @@ Craft automatically runs any pending tasks on normal site requests, but not on a
 
 If you for some reason want to disable this behavior, change this setting to `false`.   
 
+### clearKey [string]  
+*Default: `''`*  
+Key to use when clearing the transform or remote images cache with the controller actions. An empty string means clearing is disabled
+
+### imgixEnabled [bool]  
+*Default: `false`*  
+Enables [Imgix](https://www.imgix.com/) support. Read more about [Imgix support below](#imgix-support).    
+
+### imgixDomains [array]  
+*Default: `null`*  
+An array of Imgix source domains.  
+    
+### imgixDomains [array]  
+*Default: `null`*  
+An array of Imgix source domains.  
+  
+### imgixUseHttps [bool]  
+*Default: `true`*  
+Indicates if generated Imgix URLs should be https or not.   
+  
+### imgixSignKey [string]  
+*Default: `''`*  
+If you've protected your source with secure URLs, you must provide the sign key/token. An empty string indicates that the source is not secure.
+  
+### imgixSourceIsWebProxy [bool]  
+*Default: `false`*  
+Indicates if your Imgix source is a web proxy or not.   
+  
+### imgixUseCloudSourcePath [bool]  
+*Default: `true`*  
+If enabled, Imager will prepend the Craft source path to the asset path, before passing it to the Imgix URL builder. This makes it possible to 
+have one Imgix source pulling images from many Craft sources when they are on the same S3 bucket, but in different subfolder.  
+  
+### imgixShardStrategy [string]  
+*Default: `'cycle'`*  
+*Allowed values: `'cycle'`, `'crc'`*   
+Determines the sharding strategy if more than one source is used. 
+
+### imgixGetExternalImageDimensions [bool]  
+*Default: `true`*  
+Imager does its best at determining the dimensions of the transformed images. If the supplied asset is on Craft source,
+it's easy because Craft records the original dimensions of the image in the database. But if the image is external, it's
+not that easy. Imager will try to determine the size based on the transform parameters, and if both width and height, or
+ratio is provided, it'll usually be able to. But if you only transform by one attribute, it may not be possible. In these
+cases Imager will by default download the source image and check the dimensions to calculate the missing bits.
+
+By disabling this setting, you're telling Imager to never download external images, and to just give up on trying to figure
+out the dimensions. If you supplied only width to the transform, height will then be set to 0. If you don't need to use height
+in your code, that's totally fine, and you've managed to squeeze out a bit more performance.
+
+### imgixDefaultParams [array]  
+*Default: `null`*  
+You can use this setting to set default parameters that you want passed to all your Imgix transforms. Example:
+
+    'imgixDefaultParams' => array('auto'=>'compress,format', 'q'=>80)
+
+
 ---
 
 Usage
@@ -310,7 +544,7 @@ If you've ever done an image transform in a Craft template, this probably looks 
 The same code using Imager would look like this:
 
     {% set image = craft.assets().limit(1).first() %}
-    {% set transformedImage = craft.imager.transformImage(image, { width: 1000 })
+    {% set transformedImage = craft.imager.transformImage(image, { width: 1000 }) %}
     <img src="{{ transformedImage.url }}">
 
 So far, it's more code than the Craft way. But, let's say you need to resize the image to six different widths, because you're using <picture> and srcset to serve up responsive images (in a modern and futureproof way). And you want the crop position on all the images to be in the bottom-right corner, an aspect ratio of 16:9, and while the large images should have a high jpeg quality, the smaller ones should be more optimized. 
@@ -324,7 +558,18 @@ Here's how the code would look with Imager:
 		{ width: 600, jpegQuality: 65 }, 
 		{ width: 400, jpegQuality: 65 }
 		], { ratio: 16/9, position: 'bottom-right', jpegQuality: 80 }) %}
+		
+Imager 1.5.0 also introduced a convenient `fillTransforms` config setting which makes the above code even simpler:
+		
+	{% set transformedImages = craft.imager.transformImage(image, [
+		{ width: 1200 }, 
+		{ width: 600, jpegQuality: 65 }, 
+		{ width: 400, jpegQuality: 65 }
+		], { ratio: 16/9, position: 'bottom-right', jpegQuality: 80 }, 
+		{ fillTransforms: true }) %}
 
+See the `fillTransforms`, `fillAttribute` and `fillInterval` settings for more information.
+		
 The plugin also includes some additional methods that helps you streamline the creation of responsive images. With the above transformed images, you can output the appropriate srcset like this, with a base64-encoded placeholder in the src attribute:
 
     <img src="{{ craft.imager.base64Pixel(16, 9) }}" sizes="100vw" srcset="{{ craft.imager.srcset(transformedImages) }}">
@@ -371,18 +616,31 @@ The main transform method. Returns either an Imager_ImageModel (see documentatio
 **transformDefaults**: An object containing any default transform settings that should be applied to each transform. If transform properties given here are specified in an individual transform, the property value of the individual transform will be used.    
 **configOverrides**: An object containing any overrides to the default config settings that should be used for this transform. See the "Configuration"-section for information on which settings that can be overridden.
 
-### craft.imager.base64Pixel([width=1, height=1])
+### craft.imager.base64Pixel([width=1, height=1, color='transparent'])
 Outputs a base64 encoded SVG image. 
 
 **width**: Width of the placeholder. Defaults to '1'.  
 **height**: Height of the placeholder. Defaults to '1'.
+**color**: Color of the placeholder. Defaults to 'transparent'.
 
 ### craft.imager.srcset(images [, descriptor='w'])
 Outputs a srcset string from an array of transformed images.
 
 **images**: An array of Imager_ImageModel objects, or anything else that support the interface.  
-**descriptior**: A string indicating which size descriptor should be used in the srcset. *Only 'w' is supported at the moment.*
+**descriptior**: A string indicating which size descriptor should be used in the srcset. 'w', 'h' and 'w+h' is supported at the moment. Please note that 'h' isn't standards-compliant, but is useful for instance when using Lazysizes and their bgset plugin.
 
+### craft.imager.serverSupportsWebp()
+Returns `true` or `false` depending on if the server has support for webp or not. This could either indicate built in support for webp in the current image driver, GD or Imagick, or the presence of the cwebp binary if this has been enabled.  
+
+### craft.imager.clientSupportsForWebp()
+Returns `true` or `false` depending on if the client has support for webp or not. This is deducted from the Accept header that the client sends.   
+  
+*If you use template caching, or any kind of front side cache (Varnish, Fastly, etc), make sure you create different caches based on if the client has support for webp or not. For template caching, adding a string to the key based on this variable, is one way to solve it. Example:*
+  
+    {% cache using key "my-content" ~ (craft.imager.clientSupportsForWebp ? "-with-webp") %}  
+    ...
+    {% endcache %}
+ 
 ### craft.imager.getDominantColor(image [, quality=10, colorValue='hex'])
 Gets the dominant color of an image. Uses [Color Thief](https://github.com/ksubileau/color-thief-php) for all the magic.
 
@@ -404,6 +662,13 @@ Converts a hexadecimal color value to rgb. Input value must be a string. Output 
 ### craft.imager.rgb2hex(color)
 Converts a rgb color value to hexadecimal. Input value must be an array with red as index 0, green as index 1 and blue as index 2. Output value is a string.
 
+### craft.imager.isAnimated(image)
+Returns `true` or `false` depending on if the supplied image is animated or not (only gif support at the moment).   
+
+### craft.imager.imgixEnabled()
+Returns `true` or `false` depending on if Imgix is enabled.   
+
+
 ---
 
 Transform parameters
@@ -412,7 +677,7 @@ The following parameters are available in the transform object.
 
 ### format [string]
 *Default: `null`*  
-*Allowed values: `null`, `'jpg'`, `'png'`, `'gif'`*   
+*Allowed values: `null`, `'jpg'`, `'png'`, `'gif'`, `'webp'`*   
 Format of the created image. If unset (default) it will be the same format as the source image.
 
 ### width [int]
@@ -449,6 +714,23 @@ The mode that should be used when resizing images.
 By default when cropping, the image will be resized to the smallest size needed to make the image fit the given crop size. By increasing the `cropZoom` value, the image will be resized to a bigger size before cropping. 
 
 Example: If the original image is 1600x900px, and you resize it to 300x300px with mode 'crop' and a cropZoom value of 1.5, the image will; 1) be resized to 800x450px and 2) a crop of 300x300px will be made (the position depending on the position given).
+
+### frames [string]
+Let's you extract only certain frames from an animated gif. The parameter takes a string in the format `'startFrame/endFrame@frameInterval'`.
+End frame and frame interval is optional. Examples:
+
+    // Get only first frame of animated gif
+    {% set transformedImage = craft.imager.transformImage(animatedGif, { width: 300, frames: '0' }) %}
+
+    // Get the first ten frames of animated gif
+    {% set transformedImage = craft.imager.transformImage(animatedGif, { width: 300, frames: '0-9' }) %}
+
+    // Get every fifth frame between frames 0 and 40
+    {% set transformedImage = craft.imager.transformImage(animatedGif, { width: 300, frames: '0-40@5' }) %}
+
+    // Get every fifth frame between the first and the last frame
+    {% set transformedImage = craft.imager.transformImage(animatedGif, { width: 300, frames: '0-*@5' }) %}
+
 
 ### watermark [object]
 *Default: null*    
@@ -502,6 +784,12 @@ As with the `effects`, this adds image adjustments to the transformed image, but
 * letterbox
 * hashFilename
 * hashRemoteUrl
+
+### imgixParams [object]
+*Default: null*   
+Additional parameters that are passed to the [Imgix URL API](https://docs.imgix.com/apis/url) if Imgix is enabled. 
+
+
 
 ---
 
@@ -575,6 +863,45 @@ Applies an unsharp mask with [Imagick's unsharpMaskImage method](http://php.net/
 
     {% set transformedImage = craft.imager.transformImage(image, { width: 500, effects: { unsharpMask: [0, 0.5, 1, 0.05] } }) %}
 
+### clut [array]
+Applies a [clut (color lookup table) effect](http://stackoverflow.com/questions/36823310/imagick-gradient-map/36825769#36825769) 
+to the image, using [Imagick's clutImage method](http://php.net/manual/en/imagick.clutimage.php). You probably want to use it
+together with modulate to get a real duotone effect. Example:
+
+    {% set transformedImage = craft.imager.transformImage(image, { width: 500, effects: { modulate: [100, 0, 100], clut: 'gradient:darkblue-aqua' } }) %}
+
+The parameter is the image definition string sent to [Imagick's newPseudoImage method](http://php.net/manual/en/imagick.newpseudoimage.php). You can use any 
+valid color values. Example with rgba colors:
+ 
+    {% set transformedImage = craft.imager.transformImage(image, { width: 500, effects: { modulate: [100, 0, 100], clut: 'gradient:rgba(255,0,0,0.8)-rgba(255,255,0,1)' } }) %}
+
+Please note that the alpha value doesn't actually make the color transparent, it just has the effect of moving the gradient's
+center point towards the color with the least transparency.  
+
+### quantize [array|int]
+Reduces the number of colors in an image, using [Imagick's quantizeImage method](http://php.net/manual/en/imagick.quantizeimage.php). This can help
+to reduce filesize, especially for gif images. Example:
+
+    {% set transformedImage = craft.imager.transformImage(image, { width: 500, effects: { quantize: 32 } }) %}
+
+The parameter can be an int, indicating the number of colors to reduce to, or an array that corresponds to the functions $numberColors (int), 
+$treedepth (int) and $dither (bool) parameters. Example with default treeDepth, but dithering:
+ 
+    {% set transformedImage = craft.imager.transformImage(image, { width: 500, effects: { quantize: [32, 0, true] } }) %}
+
+### levels [array]
+Adjusts an image's levels, using [Imagick's levelImage method](http://php.net/manual/en/imagick.levelimage.php). The effect takes
+an array corresponding to black point, gamma, white point and channel (optional). Example:
+
+    {% set transformedImage = craft.imager.transformImage(img, { width: 500, effects: { levels: [50, 1, 200, 'blue'] }}) %}
+
+You can use negative values for black point and white point to do a level stretch/offset:
+ 
+    {% set transformedImage = craft.imager.transformImage(img, { width: 500, effects: { levels: [-100, 1, 255, 'blue'] }}) %}
+    
+Possible values for channel is `'red'`, `'green'`, and `'blue'`. Omit it all together to adjust levels for all channels.    
+
+
 ### vignette [array]
 *The vignette effect is not yet finalized.*
 
@@ -620,6 +947,85 @@ Size of the image. Example:
 	{{ image.getSize('m', 10) }} MB 
 	{{ image.getSize('g', 10) }} GB
 
+**getDataUri() [string]**  
+Returns a data uri with the image base64 encoded as a string.   
+
+**getBase64Encoded() [string]**  
+Returns a string of the base64 encoded image data.   
+
+---
+
+Imager_ImgixModel
+---
+The model returned by the craft.imager.transformImage method if Imgix is enabled. This model has the same signature
+as the Imager_ImageModel for companilities sake, but does return empty strings for some of its attributes that are not
+applicable, or not possible to determine.
+
+### Public attributes
+**url**: URL to the image.   
+**path**: Returns an empty string.   
+**extension**: Returns an empty string.   
+**mimeType**: Returns an empty string.   
+**width**: Width of the image.   
+**height**: Height of the image.    
+**size**: Returns an empty string.    
+
+### Public methods
+**getUrl() [string]**   
+URL to the image.   
+
+**getPath() [string]**   
+Returns an empty string. 
+
+**getExtension() [string]**  
+Returns an empty string.   
+
+**getMimeType() [string]**  
+Returns an empty string.   
+
+**getWidth() [string]**  
+Width of the image.   
+
+**getHeight() [string]**  
+Height of the image.   
+
+**getSize($unit='b', $precision='2') [float]**  
+Returns an empty string.  
+
+**getDataUri() [string]**  
+Returns an empty string.   
+
+**getBase64Encoded() [string]**  
+Returns an empty string.   
+
+---
+
+Controller actions
+---
+Imager has two controller actions, one for clearing the transformed images cache, and one for clearing remote images.
+You can use this if you wish to clear the cache as part of your deploy process, or similar.
+
+Both actions needs a parameter `key`, which is set with the `clearKey` config setting.
+ 
+Clearing transform images cache:  
+    
+    http://yourdomain.com/actions/imager/clearTransforms?key=<your_key>
+
+Clearing external images cache:  
+    
+    http://yourdomain.com/actions/imager/clearRemoteImages?key=<your_key>
+
+---
+
+Imgix support
+---
+Imager 1.6.0 added support for using [Imgix](https://www.imgix.com/) with Imager. When enabled, transforms will no longer be done on your server,
+instead Imager will create an URL based on [Imgix' URL API](https://docs.imgix.com/apis/url) and Imgix will do the job of transforming
+your images. This will eliminate all issues with execution timeouts and memory limits that people are running
+into when doing massive amounts of image transforms.  
+
+For more info about how to set up Imgix support and what it can do, please read [the launch article](https://www.vaersaagod.no/en/support-for-imgix-in-imager-for-craftcms). 
+
 ---
 
 Caching and cache breaking
@@ -632,53 +1038,15 @@ When transforming a remote image, the image will be downloaded and cached for th
 
 ---
 
-Performance
----
-The main motivation behind making the plugin (before I went down the rabbit hole full of image effects, crop options, etc), was to improve the performance when doing image transforms. When using the <picture> element and srcset-attribute, there is usually 50+ image transforms being done in most of our templates. That leads to alot of database queries. Did I succeed? Benchmarks coming soon (but, yes). 
-
----
-
 Price, license and support
 ---
-The plugin is released under the MIT license, meaning you can do what ever you want with it as long as you don't blame me. **It's free**, which means there is absolutely no support included, but you might get it anyway. Just post an issue here on github if you have one, and I'll see what I can do. :)
+The plugin is released under the MIT license, meaning you can do what ever you want with it as long as you don't 
+blame me. **It's free**, which means there is absolutely no support included, but you might get it anyway. Just 
+post an issue here on github if you have one, and I'll see what I can do. It doesn't hurt to donate a beer at
+[Beerpay](https://beerpay.io/aelvan/Imager-Craft) either. Just saying. :)
 
 ---
 
 Changelog
 ---
-### 1.0.7 -- 2016.04.20
-* Fixed encoding of placeholder svg (for realz this time).    
-
-### 1.0.6 -- 2016.04.19
-* Placeholder svg is now properly url encoded.    
-* Converted spaces in generated filenames to `-`.
-* Fixed a bug where uppercase file extensions would result in save options (like compression) being ignored.
-* Allow protocol-independent URLs for remote images (Thanks, intoeetive!)
-
-### 1.0.5 -- 2016.03.23
-* Added config setting `'curlOptions'` for adding or overriding curl options (see documentation for details).
-* If a task was created during a transform, and the request was done with ajax, any pending tasks will be triggered immediately. New config setting `'runTasksImmediatelyOnAjaxRequests'` can be used to override this behavior.   
-* Better error handling and reporting when downloading remote images. Requests that time out will no longer leave an incomplete image in the remote images cache.
-* Image urls for remote images are now url encoded to fix bugs with non-ascii characters in filenames. Transformed image filename is always converted to ascii.  
-* Cached remote file is now deleted when an image's transforms are cleared.
-
-### 1.0.4 -- 2016.01.27
-* Fixed bug in AWS upload.
-
-### 1.0.3 -- 2016.01.27
-* Fixed bug in `fixSlashes` that would create an error if run on an empty string (i.e empty awsFolder).
-* Added size attribute and getSize method to `Imager_Imagemodel`.
-
-### 1.0.2 -- 2016.01.22
-* Added configuration setting `'awsFolder'` that lets you put transformed images in a subfolder on the bucket.
-* Imager now tries to determine which format an image is if the file doesn't have an extension.
-* You can now resize images based on ratio only, width or height is no longer necessary.
-* Improved downloading of remote images, now supporting both cURL (default) and `file_get_contents`. An exception is raised if neither is available.
-* When a cURL request for a remote image returns a HTTP 404, but the contents of the response is an image, the image will be returned correctly
-            
-### 1.0.1 -- 2016.01.05
-* The ImagerService class had an unnecessary dependency on Imagick, which would cause an error in the settings panel if Imagick was not installed.
-
-### 1.0.0 -- 2016.01.02
-* Beta has ended, initial release for all practical purposes.
-* Possible breaking change: The transformImage method now takes a new transformDefaults parameter. This is now the third parameter, bumping configOverrides to the fourth position.
+See [releases.json](https://raw.githubusercontent.com/aelvan/Imager-Craft/master/releases.json).
